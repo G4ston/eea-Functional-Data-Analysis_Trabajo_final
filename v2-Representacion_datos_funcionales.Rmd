@@ -1,0 +1,139 @@
+---
+title: "Representación de datos funcionales"
+output: html_notebook
+---
+
+## Instalación de librerías
+
+```{r message=FALSE, warning=FALSE}
+library(fda) # para trabajar con datos funcionales
+library(caret) # para validación cruzada
+```
+
+# Introducción
+En este notebook hablaremos de la transformación de datos discretos a funcionales. 
+Tal como introdujimos en el video inicial, en FDA ya no hablamos de datos dicretos como unidad mínima de medida, sino de funciones. Sin embargo, buena parte de los relevamientos de datos, ya sea por limitaciones en los instrumentos de recolección u otras razones, se realizan en forma discreta. Por lo tanto, es necesario transformar estos datos a una representación funcional para poder aplicar las técnicas de FDA. Es en este punto donde entran en juego las bases funcionales.
+
+## Bases funcionales
+Las bases funcionales son conjuntos de funciones que se utilizan para representar datos funcionales. Son análogas a las variables independientes en la regresión lineal, donde cada función contribuye a la forma general de la función que se está ajustando a los datos. 
+
+$$
+\LARGE \hat{\mathbf{X}} = \sum_{j = 1}^{j} \hat{\alpha}_j  \phi_j
+$$
+
+### Fourier y B-splines
+```{r}
+# Bases bsplines
+x <- seq(0,1,length.out=100)
+bsbasis_obj <- create.bspline.basis(rangeval=c(0,1),
+                                    nbasis=10, norder=3)
+bsbasisevals <- eval.basis(x, bsbasis_obj)
+matplot(x, bsbasisevals, type='l', lty=1, col=rainbow(15),
+        xlab="x", ylab="basis fns", 
+        main="Bases B-spline con polinomios de grado 3")
+
+# Bases de Fourier
+fbasis_obj <- create.fourier.basis(rangeval=c(0,1), 
+                                   nbasis=5) # period = 1
+fbasisevals <- eval.basis(x, fbasis_obj)
+matplot(x, fbasisevals[, 1:5], type='l', lty=1, col=rainbow(3),
+        xlab="x", ylab="basis fns", 
+        main="Bases de Fourier con 5 funciones base")
+
+```
+
+### Ejemplo
+En el siguiente ejemplo, generaremos datos sintéticos que siguen una función sinusoidal.
+```{r}
+set.seed(42)
+dias <- seq(0, 2 * pi, length.out = 365)  # Un año en eje X
+y_real <- 10 + 5 * sin(dias) + 2 * cos(2 * dias)  # Componente "verdadera"
+y_observada <- y_real + rnorm(length(dias), mean = 0, sd = 3)  # Agregamos ruido
+```
+
+Primero observamos qué datos discretos generamos. En este caso, la línea punteada representa la función "verdadera" y los puntos grises son las observaciones con ruido. 
+```{r}
+plot(dias, y_real, type = "l", col = "black", lty = 2, xlab = "Día del año", lwd = 3, 
+       ylab = "Precipitación (mm)", main = paste("Grafico de observaciones discretas"),
+       ylim = c(1, 25))
+points(dias, y_observada, col = "blue", pch = 20, cex = 0.8)
+```
+
+Luego, ajustamos una curva a los datos observados. Para ello, utilizamos una base de funciones B-spline (pero también podríamos utilizar otras bases funcionales). Queremos observar cómo el incremento del número de funciones afecta al ajuste de la curva. 
+```{r}
+crear_base_bspline <- function(x, nbasis, norder = 3) {
+  if (nbasis < norder) {
+    stop("nbasis debe ser al menos igual a norder.")
+  }
+  rango <- range(x)
+  basis <- fda::create.bspline.basis(rangeval = rango, nbasis = nbasis, norder = norder)
+  matriz_bspline <- eval.basis(x, basis)
+  return(matriz_bspline)
+}
+
+# Definimos un vector caprichoso de nbasis
+n_basis_options <- c(4, 6, 9, 15, 30)  
+
+for (nbasis in n_basis_options) {
+  plot(dias, y_real, type = "l", col = "black", lty = 2, xlab = "Día del año", lwd = 3, 
+       ylab = "Precipitación (mm)", main = paste("Ajuste con", nbasis, "funciones base"),
+       ylim = c(1, 25))
+  points(dias, y_observada, col = "blue", pch = 20, cex = 0.8)
+  
+  X <- crear_base_bspline(dias, nbasis)
+  coeficientes <- solve(t(X) %*% X) %*% t(X) %*% y_observada
+  y_pred <- X %*% coeficientes
+  
+  lines(dias, y_pred, col = "red", lwd = 2, lty = 1)
+}
+```
+
+### Cross-validation para nbasis
+
+Si bien los gráficos permiten fácilmente visualizar cómo se ajusta la curva a los datos, es necesario contar con una métrica para evaluar cuál es el número óptimo de funciones base. En este caso, utilizaremos el error cuadrático medio (MSE) promedio obtenido a través de validación cruzada. 
+
+$$
+\LARGE \text{MSE} = \frac{1}{n} \sum_{i=1}^n \left( y_i - \hat{y}_i \right)^2
+$$
+
+```{r echo=TRUE}
+# Generamos un vector que almacenará los mse promedio
+mse_promedio <- c()
+
+for (nbasis in 4:30) {  #Trabajamos a partir de 4 nbasis
+  fold_mse <- c()
+  
+  folds <- createFolds(dias, k = 5, list = TRUE, returnTrain = TRUE) #Trabajamos con cross-validation de 5 folds
+  
+  for (fold in folds) {
+    train_idx <- fold
+    test_idx <- setdiff(seq_along(dias), train_idx)
+    
+    X_train <- crear_base_bspline(dias[train_idx], nbasis)
+    X_test <- crear_base_bspline(dias[test_idx], nbasis)
+    y_train <- y_observada[train_idx]
+    y_test <- y_observada[test_idx]
+    
+    coeficientes <- solve(t(X_train) %*% X_train) %*% t(X_train) %*% y_train
+    y_pred <- X_test %*% coeficientes
+    
+    fold_mse <- c(fold_mse, mean((y_test - y_pred)^2))
+  }
+  
+  mse_promedio <- c(mse_promedio, mean(fold_mse))
+}
+```
+
+
+```{r}
+# Graficamos la evolución de MSE
+plot(4:30, mse_promedio, type = "b", pch = 16, col = "blue",
+     xlab = "Número de funciones base", ylab = "MSE promedio",
+     main = "Validación cruzada para seleccionar nbasis óptimo")
+
+nbasis_optimo <- which.min(mse_promedio) + 3  # Sumar 3 porque empieza en 4
+cat("Número óptimo de funciones base:", nbasis_optimo, "\n")
+```
+
+
+

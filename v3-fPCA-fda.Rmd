@@ -1,0 +1,370 @@
+---
+title: 'Video 3: fPCA'
+output: html_document
+date: "2024-12-15"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Introduccion PCA:
+
+## La idea basica:
+
+El análisis de componentes principales (PCA), se encarga de reducir la
+dimensión de un conjunto de datos mediante el cálculo de un grupo mucho
+menor de variables ortogonales que mejor representan el conjunto
+original de datos.
+
+Formalmente, dado un conjunto de datos $X$ con $n$ observaciones y $p$
+variables:
+
+$$
+X = \begin{bmatrix}
+x_{11} & x_{12} & \dots & x_{1p} \\
+x_{21} & x_{22} & \dots & x_{2p} \\
+\vdots & \vdots & \ddots & \vdots \\
+x_{n1} & x_{n2} & \dots & x_{np}
+\end{bmatrix},
+$$
+
+PCA busca una transformación lineal de la forma:
+
+$$
+Z = XW,
+$$
+
+### Resumen de Pasos
+
+1.  **Preprocesar los datos**: Centrar y estandarizar.
+2.  **Calcular la matriz de covarianza**: $\mathbf{\Sigma}$.
+3.  **Descomponer en autovalores y autovectores**: Encontrar $\lambda_i$
+    y $\mathbf{v}_i$.
+4.  **Seleccionar** $k$ componentes principales: Basado en la varianza
+    explicada.
+5.  **Proyectar los datos**:
+    $\mathbf{Z} = \mathbf{X}_{\text{std}} \mathbf{V}_k$.
+
+## ANÁLISIS DE COMPONENTES PRINCIPALES FUNCIONALES (ACPF)
+
+El **Análisis de Componentes Principales Funcionales (ACPF)** es una
+extensión del ACP clásico para datos funcionales. En lugar de trabajar
+con vectores y matrices, ahora usamos **funciones** y **operadores**
+definidos en un espacio continuo.
+
+------------------------------------------------------------------------
+
+## 1. Primera Componente Principal Funcional
+
+La **primera componente principal funcional** $\phi_1(t)$ se define como
+la función que maximiza:
+
+$$
+\frac{1}{n-1} \sum_{i=1}^n \left[ \int_I \phi(t) x_i(t) \, dt \right]^2
+$$
+
+Sujeto a la restricción de normalización:
+
+$$
+\int_I \phi^2(t) \, dt = 1.
+$$
+
+-   Aquí, $x_i(t)$ representa la **i-ésima curva** de los datos.
+-   La integral reemplaza a las sumatorias del caso multivariado.
+-   $\phi(t)$ es la función que "pesa" las curvas para capturar la
+    máxima varianza.
+
+La **k-ésima componente principal funcional** $\phi_k(t)$ se define de
+manera análoga, pero con la restricción adicional de ser **ortogonal** a
+las componentes anteriores:
+
+$$
+\int_I \phi_j(t) \phi_k(t) \, dt = 0 \quad \text{para} \, j < k.
+$$
+
+------------------------------------------------------------------------
+
+## 2. Operador de Covarianza
+
+Para extender el concepto de **matriz de covarianza** al caso funcional,
+definimos la **función de covarianza** $v(s,t)$ como:
+
+$$
+v(s,t) = \frac{1}{n} \sum_{i=1}^n x_i(s) x_i(t),
+$$
+
+Usando $v(s,t)$, definimos el **operador de covarianza** $V$ como:
+
+$$
+(V\phi)(s) = \int_I v(s,t)\phi(t) \, dt.
+$$
+
+------------------------------------------------------------------------
+
+## 3. Valores y Funciones Propias del Operador
+
+Al igual que en el caso multivariado, buscamos **valores propios**
+$\rho_k$ y **funciones propias** $\phi_k(t)$ que satisfacen:
+
+$$
+(V\phi_k)(t) = \rho_k \phi_k(t),
+$$
+
+donde: - $\phi_k(t)$ son las **funciones principales** ortogonales entre
+sí. - $\rho_k$ son los **valores propios** asociados, ordenados de mayor
+a menor: $\rho_1 \geq \rho_2 \geq ...$.
+
+------------------------------------------------------------------------
+
+## 4. Relación con el ACP Clásico
+
+El ACPF extiende naturalmente las ideas del ACP clásico:
+
+1\. **Covarianza**: La matriz de covarianza ahora es reemplazada por el
+**operador de covarianza**.
+
+2. **Pesos**: Los vectores de pesos se convierten en **funciones
+principales** $\phi_k(t)$.
+
+3. **Valores propios**: Siguen representando la varianza explicada por
+cada componente.
+
+------------------------------------------------------------------------
+
+## 5. Resumen
+
+El ACPF permite analizar datos que varían en un espacio continuo
+(curvas) en lugar de datos tabulares. Sus principales pasos son:
+
+1.  **Construir el operador de covarianza** a partir de los datos.
+2.  Encontrar las **funciones propias** $\phi_k(t)$ y los **valores
+    propios** $\rho_k$.
+3.  Proyectar las curvas originales $x_i(t)$ sobre las funciones
+    principales $\phi_k(t)$ para reducir la dimensión y capturar la
+    varianza máxima.
+
+La primera función principal $\phi_1(t)$ explica la mayor varianza,
+seguida por $\phi_2(t)$, y así sucesivamente.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE}
+library(fda)
+library(ggplot2)
+
+growth <- fda::growth
+mb <- as.factor(c(rep("Hombre", dim(growth$hgtm)[2]), rep("Mujer", dim(growth$hgtf)[2])))
+N <- length(mb)
+x <- growth$age
+M <- length(x)
+
+y0 <- cbind(growth$hgtm, growth$hgtf)
+tibble::tibble(
+  Age = replicate(N, x, simplify = FALSE),
+  Height = purrr::array_tree(y0, margin = 2),
+  Gender = mb,
+  CurveID = 1:N
+) |> 
+  tidyr::unnest(cols = c(Age, Height)) |> 
+  ggplot(aes(Age, Height, color = Gender, group = CurveID)) + 
+  geom_point() + 
+  geom_line() +
+  theme_bw() + 
+  labs(
+    title = "Altura de 39 chicos y 54 chicas  de 1 a 18 años", 
+    x = "Edad (años)", 
+    y = "Altura (cm)"
+  )
+```
+
+El siguiente código ajusta una representación de B-spline a las curvas
+de crecimiento donde el peso λ del penalizador de rugosidad se determina
+minimizando el criterio de validación cruzada generalizada:
+
+```{r echo=FALSE}
+basisobj <- fda::create.bspline.basis(rangeval = range(x), nbasis = 15)
+fd_vals <- purrr::map(1:N, \(n) {
+  yobs <- y0[, n]
+  result <- fda::smooth.basis(x, yobs, basisobj)
+  yfd <- result$fd
+  cost <- function(lam) {
+    yfdPar <- fda::fdPar(yfd, 2, lam)
+    out <- fda::smooth.basis(x, yobs, yfdPar)
+    out$gcv
+  }
+  lambda_opt <- stats::optimise(cost, c(1e-8, 1))$minimum
+  if (lambda_opt <= 1e-8)
+    cli::cli_alert_warning("La penalización óptima ha alcanzado el límite inferior (1e-8) para la curva #{n}.")
+  if (lambda_opt >= 1)
+    cli::cli_alert_warning("La penalización óptima ha alcanzado el límite superior (1) para la curva #{n}.")
+  yfdPar <- fda::fdPar(yfd, 2, lambda_opt)
+  fda::smooth.fd(yfd, yfdPar)
+})
+fd <- fda::fd(
+  coef = fd_vals |>
+    purrr::map("coefs") |>
+    purrr::reduce(cbind),
+  basisobj = basisobj
+)
+```
+
+```{r echo=FALSE}
+y0 <- fda::eval.fd(x, fd, 0)
+tibble::tibble(
+  Age = replicate(N, x, simplify = FALSE),
+  Height = purrr::array_tree(y0, margin = 2),
+  Gender = mb,
+  CurveID = 1:N
+) |> 
+  tidyr::unnest(cols = c(Age, Height)) |> 
+  ggplot(aes(Age, Height, color = Gender, group = CurveID)) + 
+  geom_point() + 
+  geom_line() +
+  theme_bw() + 
+  labs(
+    title = "Altura de 39 chicos y 54 chicas  de 1 a 18 años", 
+    x = "Edad (años)", 
+    y = "Altura (cm)"
+  )
+```
+
+```{r echo=FALSE}
+y1 <- fda::eval.fd(x, fd, 1)
+tibble::tibble(
+  Age = replicate(N, x, simplify = FALSE),
+  Height = purrr::array_tree(y1, margin = 2),
+  Gender = mb,
+  CurveID = 1:N
+) |>
+  tidyr::unnest(cols = c(Age, Height)) |>
+  ggplot(aes(Age, Height, color = Gender, group = CurveID)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  labs(
+    title = "Velocidad de crecimiento de 39 niños y 54 niñas de 1 a 18 años",
+    x = "Edad (años)",
+    y = "velocidad crecimiento (cm/años)"
+    
+  )
+```
+
+```{r}
+# Realizando FPCA sobre las curvas funcionales
+fpca_result <- fda::pca.fd(fd, nharm=5)  # Se obtiene hasta 5 componentes principales
+
+# Visualización de las componentes principales
+fda::plot.pca.fd(fpca_result)
+
+# Mostrar las varianzas explicadas
+fpca_result$varprop  # Proporción de varianza explicada por cada componente
+
+```
+
+```{r}
+# Obtener la derivada primera de las curvas
+fd_derivative <- fda::deriv.fd(fd)
+
+# Aplicando FPCA sobre la derivada
+fpca_derivative_result <- fda::pca.fd(fd_derivative, nharm=5)
+
+# Visualización de las componentes principales de la derivada
+fda::plot.pca.fd(fpca_derivative_result)
+
+# Mostrar las varianzas explicadas para la derivada
+fpca_derivative_result$varprop
+
+```
+
+```{r echo=FALSE}
+library(fda)
+library(ggplot2)
+library(tibble)
+library(dplyr)
+library(cli)
+
+growth <- fda::growth
+
+# Seleccionar solo los datos de los chicos (Hombres)
+mb <- as.factor(rep("Hombre", dim(growth$hgtm)[2]))  # Solo 'Hombre'
+N <- length(mb)
+x <- growth$age
+M <- length(x)
+
+# Usar solo las alturas de los chicos
+y0 <- growth$hgtm
+
+# Crear la base spline y suavizar las curvas
+basisobj <- fda::create.bspline.basis(rangeval = range(x), nbasis = 15)
+fd_vals <- purrr::map(1:N, \(n) {
+  yobs <- y0[, n]
+  result <- fda::smooth.basis(x, yobs, basisobj)
+  yfd <- result$fd
+  cost <- function(lam) {
+    yfdPar <- fda::fdPar(yfd, 2, lam)
+    out <- fda::smooth.basis(x, yobs, yfdPar)
+    out$gcv
+  }
+  lambda_opt <- stats::optimise(cost, c(1e-8, 1))$minimum
+  if (lambda_opt <= 1e-8)
+    cli::cli_alert_warning("La penalización óptima ha alcanzado el límite inferior (1e-8) para la curva #{n}.")
+  if (lambda_opt >= 1)
+    cli::cli_alert_warning("La penalización óptima ha alcanzado el límite superior (1) para la curva #{n}.")
+  yfdPar <- fda::fdPar(yfd, 2, lambda_opt)
+  fda::smooth.fd(yfd, yfdPar)
+})
+fd <- fda::fd(
+  coef = fd_vals |>
+    purrr::map("coefs") |>
+    purrr::reduce(cbind),
+  basisobj = basisobj
+)
+
+# Evaluar la curva suavizada
+y0 <- fda::eval.fd(x, fd, 0)
+
+# Graficar solo los chicos
+tibble::tibble(
+  Age = replicate(N, x, simplify = FALSE),
+  Height = purrr::array_tree(y0, margin = 2),
+  Gender = mb,
+  CurveID = 1:N
+) |> 
+  tidyr::unnest(cols = c(Age, Height)) |> 
+  ggplot(aes(Age, Height, color = Gender, group = CurveID)) + 
+  geom_point() + 
+  geom_line() +
+  theme_bw() + 
+  labs(
+    title = "Altura de 39 chicos de 1 a 18 años", 
+    x = "Edad (años)", 
+    y = "Altura (cm)"
+  )
+
+
+```
+
+```{r}
+
+# Realizando FPCA sobre las curvas funcionales de los chicos
+fpca_result <- fda::pca.fd(fd, nharm=5)  # Se obtiene hasta 5 componentes principales
+
+# Visualización de las componentes principales
+fda::plot.pca.fd(fpca_result)
+
+# Mostrar las varianzas explicadas
+fpca_result$varprop  # Proporción de varianza explicada por cada componente
+
+# Obtener la derivada primera de las curvas
+fd_derivative <- fda::deriv.fd(fd)
+
+# Aplicando FPCA sobre la derivada (velocidad de crecimiento)
+fpca_derivative_result <- fda::pca.fd(fd_derivative, nharm=5)
+
+# Visualización de las componentes principales de la derivada
+fda::plot.pca.fd(fpca_derivative_result)
+
+# Mostrar las varianzas explicadas para la derivada
+fpca_derivative_result$varprop
+
+```

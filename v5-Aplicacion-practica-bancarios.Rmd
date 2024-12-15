@@ -1,0 +1,451 @@
+---
+title: "Aplicación de técnicas de clustering a datos funcionales - Clientes bancarios"
+output: html_notebook
+---
+
+### Instalación de librerías
+
+```{r message=FALSE, warning=FALSE}
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(fda)
+library(fdacluster)
+library(funFEM)
+```
+
+Lectura del dataset
+```{r}
+# Cargar el dataset
+df_su <- fread("C:/Users/Gastón/maestria/EEA/eea - Functional Data Analysis/FDA_dataset_EJEMPLOS.csv")
+
+df_su <- df_su %>%
+  mutate(clase_binaria = ifelse(clase_ternaria %in% c("BAJA+1", "BAJA+2"), "BAJAS", clase_ternaria))
+
+df_su <- df_su %>%
+  filter(clase_binaria %in% c("BAJAS", "CONTINUA"))
+
+tiempo_su <- sort(unique(df_su$foto_mes))
+
+```
+
+
+## Descripción del dataset
+Para la aplicación de técnicas de clustering utilizaremos datos que provienen de la materia Data Mining en Economía y Finanzas, de la Maestría en Explotación de Datos y Descubrimiento del conocimiento (UBA). 
+Es un dataset real de clientes de un banco, que contiene atributos referentes a su comportamiento bancario como transacciones, movimientos, deudas, solicitudes, etc. Es un dataset intrínsecamente temporal, ya que contiene observaciones discretas de estas variables a lo largo de los meses de estadía de cada cliente.
+
+Trabajaremos con aquellos clientes activos durante el período de enero del 2019 a agosto del 2021. 
+
+
+```{r echo=FALSE}
+# 2. Información general del dataset
+cat("Dimensiones del dataset (Filas x Columnas):\n")
+print(dim(df_su))
+
+cat("\nPrimeras filas del dataset:\n")
+print(head(df_su))
+
+cat("\nEstructura del dataset (tipos de datos):\n")
+print(str(df_su))
+```
+Contamos con un dataset de 31481 registros y 24 atributos. Como preprocesamiento, transformamos la variable clase_ternaria en una variable binaria, que toma el valor "BAJAS" si el cliente se encuentra en la clase "BAJA+1" o "BAJA+2", y "CONTINUA" en caso contrario.
+Los atributos hacen referencia a información de clientes, como su comportamiento en el banco a nivel transacciones, deudas, solicitudes, etc. Además, contamos con la variable foto_mes, que indica el mes en el que se tomó la foto de los datos.
+
+
+```{r echo=FALSE}
+#options(repr.plot.width = 40, repr.plot.height = 20)
+
+# Scatter plot de mcuentas_saldo
+ggplot(df_su, aes(x = foto_mes, y = mcuentas_saldo, color = clase_binaria)) +
+  geom_point(alpha = 0.7) + # Los puntos tienen algo de transparencia
+  labs(
+    title = "Evolución de mcuentas_saldo a lo largo de foto_mes",
+    x = "Mes (foto_mes)",
+    y = "mcuentas_saldo",
+    color = "Clase Binaria"
+  ) +
+  theme_minimal() + 
+  scale_color_manual(
+    values = c("BAJAS" = "red", "CONTINUA" = "blue")
+  ) +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "1 months") + # Formato y frecuencia del eje X
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1) # Inclinación de las etiquetas
+  )
+```
+La clase "CONTINUA" es mayoritaria en el dataset, y los clientes que están próximos a darse de baja, ya sea en en el próximo mes o en los próximos dos meses, son minoritarios. 
+
+# B-splines
+## Datos Funcionales de mcuenta_saldo
+
+Trabajamos con bases b-splines para transformar los datos de mcuentas_saldo. En este caso, a modo de ejemplo, utilizamos 10 elementos de la base funcional, pero se puede ajustar este número con técnicas como cross-validation para encontrar el óptimo. 
+
+```{r}
+# Crear base de B-splines
+nbasis <- 10
+range_t <- range(as.numeric(tiempo_su))
+basis <- create.bspline.basis(rangeval = range_t, nbasis = nbasis, norder = 4)
+
+# Crear el objeto clientes_colores
+clientes_colores <- df_su %>%
+  group_by(numero_de_cliente) %>%
+  summarise(color = ifelse(any(clase_binaria == "BAJAS"), "red", "blue"))
+
+# Preparar los datos funcionales
+datos_funcionales <- df_su[, c("numero_de_cliente", "foto_mes", "mcuentas_saldo")] %>%
+  pivot_wider(names_from = foto_mes, values_from = mcuentas_saldo) %>%
+  left_join(clientes_colores, by = "numero_de_cliente")
+
+# Reordenar las columnas de tiempo para asegurar el orden
+valores <- as.matrix(datos_funcionales[,-c(1, ncol(datos_funcionales))]) # Eliminar columnas no funcionales
+valores <- valores[, order(as.numeric(colnames(valores)))] # Ordenar columnas por fecha
+
+# Manejar NA (opcional)
+valores[is.na(valores)] <- 0
+
+# Generar curvas funcionales
+fdPar_obj <- fdPar(basis)
+curvas_funcionales <- smooth.basis(tiempo_su, t(valores), fdPar_obj)$fd
+```
+
+```{r echo=FALSE}
+# Graficar curvas funcionales con colores y eje X corregido
+plot(curvas_funcionales,
+     main = "Curvas funcionales de 'mcuentas_saldo' coloreadas por clase_binaria",
+     xlab = "Mes (foto_mes)",
+     ylab = "mcuentas_saldo",
+     col = datos_funcionales$color,
+     lty = 1,
+     xaxt = "n") # Desactivar el eje X por defecto
+
+# Ajustar el eje X con etiquetas correctas y en 45 grados
+ticks <- seq(from = range_t[1], to = range_t[2], length.out = length(tiempo_su))
+labels <- format(as.Date(ticks, origin = "1970-01-01"), "%Y-%m")
+
+axis(1, at = ticks, labels = FALSE) # Colocar los ticks en el eje X sin etiquetas
+par(xpd = TRUE) # Permitir que las etiquetas se dibujen fuera del plot
+text(x = ticks, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), # Posición vertical ajustada
+     labels = labels, srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+
+# Agregar leyenda
+legend("topright",
+       legend = c("BAJAS", "CONTINUA"),
+       col = c("red", "blue"),
+       lty = 1, 
+       cex = 0.8)
+```
+
+## Cálculo de la primera derivada "mcuentas_saldo"
+Calculamos de esta curva funcional, la derivada primera y realizamos clustering funcional basado en las curvas derivadas. 
+
+```{r}
+# Calcular la derivada de las curvas funcionales
+curvas_derivadas <- deriv.fd(curvas_funcionales, deriv = 1)
+```
+
+```{r echo=FALSE}
+# Graficar las curvas derivadas (opcional para inspección)
+plot(curvas_derivadas,
+     main = "Curvas derivadas de 'mcuentas_saldo'",
+     xlab = "Mes (foto_mes)",
+     ylab = "Derivada de 'mcuentas_saldo'",
+     col = datos_funcionales$color,
+     lty = 1,
+     xaxt= "n")
+
+# Ajustar el eje X con etiquetas correctas y en 45 grados
+ticks <- seq(from = range_t[1], to = range_t[2], length.out = length(tiempo_su))
+labels <- format(as.Date(ticks, origin = "1970-01-01"), "%Y-%m")
+
+axis(1, at = ticks, labels = FALSE) # Colocar los ticks en el eje X sin etiquetas
+par(xpd = TRUE) # Permitir que las etiquetas se dibujen fuera del plot
+text(x = ticks, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), # Posición vertical ajustada
+     labels = labels, srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+```
+
+## Clustering funcional basado en curvas funcionales
+Realizamos clustering funcional basado en las curvas funcionales. 
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+k <- 3  # Cambiar según la necesidad
+resultado_clustering <- funFEM(curvas_funcionales, K = k, model = "AkjBk", init = "kmeans")
+
+# Ver resultados del clustering
+print(resultado_clustering)
+
+# Asignar clusters a los datos originales
+datos_funcionales$cluster <- resultado_clustering$cls
+```
+
+```{r echo=FALSE}
+# Graficar resultados
+plot(curvas_funcionales,
+     col = datos_funcionales$cluster,
+     main = "Clustering funcional basado en curvas funcionales",
+     xlab = "Mes (foto_mes)",
+     ylab = "mcuentas_saldo",
+     lty = 1,
+     xaxt= "n")
+
+# Ajustar el eje X con etiquetas correctas y en 45 grados
+ticks <- seq(from = range_t[1], to = range_t[2], length.out = length(tiempo_su))
+labels <- format(as.Date(ticks, origin = "1970-01-01"), "%Y-%m")
+
+axis(1, at = ticks, labels = FALSE) # Colocar los ticks en el eje X sin etiquetas
+par(xpd = TRUE) # Permitir que las etiquetas se dibujen fuera del plot
+text(x = ticks, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), # Posición vertical ajustada
+     labels = labels, srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+
+
+legend("topright", 
+       legend = paste("Cluster", 1:k),
+       col = 1:k, 
+       lty = 1, 
+       cex = 0.8)
+
+```
+
+```{r include=FALSE}
+k <- 3  # Cambiar según la necesidad
+resultado_clustering <- funFEM(curvas_derivadas, K = k, model = "AkjBk", init = "kmeans")
+
+# Ver resultados del clustering
+print(resultado_clustering)
+
+# Asignar clusters a los datos originales
+datos_funcionales$cluster <- resultado_clustering$cls
+```
+
+```{r echo=FALSE}
+# Graficar resultados
+plot(curvas_derivadas,
+     col = datos_funcionales$cluster,
+     main = "Clustering funcional basado en derivadas",
+     xlab = "Mes (foto_mes)",
+     ylab = "Derivada de 'mcuentas_saldo'",
+     lty = 1,
+     xaxt= "n")
+
+# Ajustar el eje X con etiquetas correctas y en 45 grados
+ticks <- seq(from = range_t[1], to = range_t[2], length.out = length(tiempo_su))
+labels <- format(as.Date(ticks, origin = "1970-01-01"), "%Y-%m")
+
+axis(1, at = ticks, labels = FALSE) # Colocar los ticks en el eje X sin etiquetas
+par(xpd = TRUE) # Permitir que las etiquetas se dibujen fuera del plot
+text(x = ticks, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), # Posición vertical ajustada
+     labels = labels, srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+
+
+legend("topright", 
+       legend = paste("Cluster", 1:k),
+       col = 1:k, 
+       lty = 1, 
+       cex = 0.8)
+```
+
+
+## Exploramos la variable "mtransferencias_recibidas".
+```{r echo=FALSE}
+#options(repr.plot.width = 40, repr.plot.height = 20)
+
+# Scatter plot de mcuentas_saldo
+ggplot(df_su, aes(x = foto_mes, y = mtransferencias_recibidas, color = clase_binaria)) +
+  geom_point(alpha = 0.7) + # Los puntos tienen algo de transparencia
+  labs(
+    title = "Evolución de mtransferencias_recibidas a lo largo de foto_mes",
+    x = "Mes (foto_mes)",
+    y = "mtransferencias_recibidas",
+    color = "Clase Binaria"
+  ) +
+  theme_minimal() + 
+  scale_color_manual(
+    values = c("BAJAS" = "red", "CONTINUA" = "blue")
+  ) +
+  scale_x_date(date_labels = "%Y-%m", date_breaks = "1 months") + # Formato y frecuencia del eje X
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1) # Inclinación de las etiquetas
+  )
+```
+La variable mtransferencias_recibidas es una variable que mide la cantidad de transferencias recibidas por los clientes. Al igual que mcuentas_saldo, es una variable que varía en el tiempo.
+
+### B-splines - Datos Funcionales de mtransferencias_recibidas
+
+```{r}
+nbasis <- 10
+range_t <- range(as.numeric(tiempo_su))
+basis <- create.bspline.basis(rangeval = range_t, nbasis = nbasis, norder = 4)
+
+# Crear el objeto clientes_colores
+clientes_colores <- df_su %>%
+  group_by(numero_de_cliente) %>%
+  summarise(color = ifelse(any(clase_binaria == "BAJAS"), "red", "blue"))
+
+# Preparar los datos funcionales
+datos_funcionales <- df_su[, c("numero_de_cliente", "foto_mes", "mtransferencias_recibidas")] %>%
+  pivot_wider(names_from = foto_mes, values_from = mtransferencias_recibidas) %>%
+  left_join(clientes_colores, by = "numero_de_cliente")
+
+# Reordenar las columnas de tiempo para asegurar el orden
+valores <- as.matrix(datos_funcionales[,-c(1, ncol(datos_funcionales))]) # Eliminar columnas no funcionales
+valores <- valores[, order(as.numeric(colnames(valores)))] # Ordenar columnas por fecha
+
+# Manejar NA (opcional)
+valores[is.na(valores)] <- 0
+
+# Generar curvas funcionales
+fdPar_obj <- fdPar(basis)
+curvas_funcionales <- smooth.basis(tiempo_su, t(valores), fdPar_obj)$fd
+```
+
+
+```{r echo=FALSE}
+# Graficar curvas funcionales con colores y eje X corregido
+plot(curvas_funcionales,
+     main = "Curvas funcionales de 'mtransferencias_recibidas'",
+     xlab = "Mes (foto_mes)",
+     ylab = "mtransferencias_recibidas",
+     col = datos_funcionales$color,
+     lty = 1,
+     xaxt = "n") # Desactivar el eje X por defecto
+
+# Ajustar el eje X con etiquetas correctas y en 45 grados
+ticks <- seq(from = range_t[1], to = range_t[2], length.out = length(tiempo_su))
+labels <- format(as.Date(ticks, origin = "1970-01-01"), "%Y-%m")
+
+axis(1, at = ticks, labels = FALSE) # Colocar los ticks en el eje X sin etiquetas
+par(xpd = TRUE) # Permitir que las etiquetas se dibujen fuera del plot
+text(x = ticks, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), # Posición vertical ajustada
+     labels = labels, srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+
+# Agregar leyenda
+legend("topright",
+       legend = c("BAJAS", "CONTINUA"),
+       col = c("red", "blue"),
+       lty = 1, 
+       cex = 0.8)
+```
+# Fourier
+### Datos Funcionales de mtransferencias_recibidas
+La variable mtransferencias_recibidas puede denotar cierta periodicidad, en tanto el atributo puede contener cobros de sueldo, aguinaldo, pagos a proveedores, etc. Es decir, esta variable puede contener cierta periocidiadad para los clientes por lo que consideramos importante explorar curvas funcionales con bases de Fourier.  
+
+
+```{r}
+nbasis <- 10
+range_t <- range(as.numeric(tiempo_su))  # Rango de tiempo
+basis <- create.fourier.basis(rangeval = range_t, nbasis = nbasis)
+
+# Crear el objeto clientes_colores
+clientes_colores <- df_su %>%
+  group_by(numero_de_cliente) %>%
+  summarise(color = ifelse(any(clase_binaria == "BAJAS"), "red", "blue"))
+
+# Preparar los datos funcionales
+datos_funcionales <- df_su[, c("numero_de_cliente", "foto_mes", "mtransferencias_recibidas")] %>%
+  pivot_wider(names_from = foto_mes, values_from = mtransferencias_recibidas) %>%
+  left_join(clientes_colores, by = "numero_de_cliente")
+
+# Reordenar las columnas de tiempo para asegurar el orden
+valores <- as.matrix(datos_funcionales[,-c(1, ncol(datos_funcionales))]) # Eliminar columnas no funcionales
+valores <- valores[, order(as.numeric(colnames(valores)))] # Ordenar columnas por fecha
+
+# Manejar NA (opcional)
+valores[is.na(valores)] <- 0
+
+# Generar curvas funcionales
+fdPar_obj <- fdPar(basis)
+curvas_funcionales <- smooth.basis(tiempo_su, t(valores), fdPar_obj)$fd
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Graficar curvas funcionales con colores y eje X corregido
+plot(curvas_funcionales,
+     main = "Curvas funcionales Fourier de 'mtransferencias_recibidas'",
+     xlab = "Mes (foto_mes)",
+     ylab = "mtransferencias_recibidas",
+     col = datos_funcionales$color,
+     lty = 1,
+     xaxt = "n") # Desactivar el eje X por defecto
+
+# Ajustar el eje X con etiquetas correctas y en 45 grados
+ticks <- seq(from = range_t[1], to = range_t[2], length.out = length(tiempo_su))
+labels <- format(as.Date(ticks, origin = "1970-01-01"), "%Y-%m")
+
+axis(1, at = ticks, labels = FALSE) # Colocar los ticks en el eje X sin etiquetas
+par(xpd = TRUE) # Permitir que las etiquetas se dibujen fuera del plot
+text(x = ticks, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), # Posición vertical ajustada
+     labels = labels, srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+
+# Agregar leyenda
+legend("topright",
+       legend = c("BAJAS", "CONTINUA"),
+       col = c("red", "blue"),
+       lty = 1, 
+       cex = 0.8)
+```
+### Fourier - Derivada primera de mtransferencias_recibidas
+
+```{r echo=FALSE}
+# Calcular la derivada de las curvas funcionales
+curvas_derivadas <- deriv.fd(curvas_funcionales, deriv = 1)
+
+# Graficar las curvas derivadas (opcional para inspección)
+plot(curvas_derivadas,
+     main = "Curvas derivadas de 'mtransferencias_recibidas'",
+     xlab = "Mes (foto_mes)",
+     ylab = "Derivada (Fourier) de 'mtransferencias_recibidas'",
+     col = datos_funcionales$color,
+     lty = 1,
+     xaxt= "n")
+
+# Ajustar el eje X con etiquetas correctas y en 45 grados
+ticks <- seq(from = range_t[1], to = range_t[2], length.out = length(tiempo_su))
+labels <- format(as.Date(ticks, origin = "1970-01-01"), "%Y-%m")
+
+axis(1, at = ticks, labels = FALSE) # Colocar los ticks en el eje X sin etiquetas
+par(xpd = TRUE) # Permitir que las etiquetas se dibujen fuera del plot
+text(x = ticks, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), # Posición vertical ajustada
+     labels = labels, srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+```
+## Clustering curvas funcionales (Fourier) de mtransferencias_recibidas
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+k <- 3  # Cambiar según la necesidad
+resultado_clustering <- funFEM(curvas_funcionales, K = k, model = "AkjBk", init = "kmeans")
+
+# Ver resultados del clustering
+print(resultado_clustering)
+
+# Asignar clusters a los datos originales
+datos_funcionales$cluster <- resultado_clustering$cls
+```
+
+```{r echo=FALSE}
+# Graficar resultados
+plot(curvas_funcionales,
+     col = datos_funcionales$cluster,
+     main = "Clustering funcional basado en curvas funcionales (Fourier)",
+     xlab = "Mes (foto_mes)",
+     ylab = "Derivada de 'mtransferencias_recibidas'",
+     lty = 1,
+     xaxt= "n")
+
+# Ajustar el eje X con etiquetas correctas y en 45 grados
+ticks <- seq(from = range_t[1], to = range_t[2], length.out = length(tiempo_su))
+labels <- format(as.Date(ticks, origin = "1970-01-01"), "%Y-%m")
+
+axis(1, at = ticks, labels = FALSE) # Colocar los ticks en el eje X sin etiquetas
+par(xpd = TRUE) # Permitir que las etiquetas se dibujen fuera del plot
+text(x = ticks, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), # Posición vertical ajustada
+     labels = labels, srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+
+
+legend("topright", 
+       legend = paste("Cluster", 1:k),
+       col = 1:k, 
+       lty = 1, 
+       cex = 0.8)
+
+```
+

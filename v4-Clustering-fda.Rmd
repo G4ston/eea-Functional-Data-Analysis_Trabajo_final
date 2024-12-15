@@ -1,0 +1,185 @@
+---
+title: "Video 4 - Clustering"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+# Introduccion al Clustering:
+
+El agrupamiento **(clustering)** es una práctica que identifica datos segun algún tipo de similitud y los ordena en grupos.
+
+Esta similitud se mide generalmente en términos de distancia
+
+## Tipos de clustering
+
+![](images/clipboard-3022266058.png)
+
+**Calculos de distancia:**
+
+-   Distancia euclidea:
+
+$$
+d_{\text{euc}}(x, y) = \sqrt{\sum_{i=1}^{n} (x_i - y_i)^2}
+$$
+
+donde:
+
+-   $d_{\text{euc}}(x, y)$ representa la distancia euclidiana entre $x$ y $y$.
+
+-   $x = (x_1, x_2, \dots, x_n)$ y $y = (y_1, y_2, \dots, y_n)$ son vectores en un espacio $n$-dimensional.
+
+-   Distancia Manhattan:
+
+$$
+\left( \sum_{i=1}^{n} |x_{i} - y_{i}|^p \right)^{\frac{1}{p}}
+$$
+
+**Similitud y Correlación**
+
+**Correlación de Pearson:**
+
+$$
+\rho = \frac{cov(X, Y)}{\sigma_x \sigma_y}
+$$ La correlación de Pearson mide el grado de una relación lineal entre dos dataset que siguen una distribución normal. Un valor de 1 representa una perfecta correlación positiva, -1 es perfecta correlación negativa y 0 indica ausencia de correlación
+
+# Clustering no Jerarquico
+
+## K-means
+
+***Conceptos básicos***
+
+La idea básica detrás de la agrupación de k-means consiste en definir grupos de modo que la variación de distancias dentro de cada grupo sea mínima.
+
+![](images/clipboard-3680745052.png)
+
+Donde:
+
+-   xi es un punto que pertenece al cluster Ck.
+
+-   μk es el valor medio de los puntos del cluster Ck.
+
+![](images/clipboard-384426224.png)
+
+## Clustering en FDA
+
+En el contexto de Functional Data Analysis (FDA), el algoritmo k-means se adapta para trabajar con datos funcionales, es decir, funciones continuas definidas sobre un dominio.
+
+![](images/clipboard-1794559554.png)
+
+### ¿Cómo funciona k-means en FDA?
+
+1.  **Definir la distancia funcional:**
+
+-    Una métrica común es la **norma** $L^2$**,** que mide la distancia cuadrática entre dos funciones:
+
+$$
+d(f, g) = \sqrt{\int_T (f(t) - g(t))^2 \, dt}
+$$
+
+aqui, $f(t)$ y $g(t)$ son funciones evaluadas en el dominio $𝑇$ .
+
+2.  **Inicialización:**
+
+-   Se seleccionan $k$ centroides iniciales, que en este caso son curvas
+
+3.  **Asignación de curvas a clusters:**
+
+-   Cada función del dataset se asigna al clúster cuyo centroide minimice la distancia funcional
+
+4.  **Actualizar los centroides:**
+
+Los centroides de los clusters se actualizan como la media funcional de un conjunto de funciones $\{ f_1, f_2, \dots, f_n \}$ que se define como:
+
+$$
+\mu(t) = \frac{1}{n} \sum_{i=1}^{n} f_i(t)
+$$
+
+5.  **Repetir hasta convergencia:**
+
+-   Los pasos de asignación y actualización se repiten hasta que las asignaciones no cambien o hasta que la mejora en la función objetivo (la suma de las distancias al cuadrado dentro de los clusters) sea mínima
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(fda)
+library(fdacluster)
+library(funFEM)
+```
+
+## Lectura del dataset y preprocesamiento básica
+
+El dataset de temperatura de Canadá en la librería fda de R se utiliza como un ejemplo introductorio para trabajar con Functional Data Analysis (FDA). Este dataset contiene datos funcionales relacionados con las temperaturas promedio mensuales registradas en varias estaciones meteorológicas en Canadá.
+
+**El dataset incluye lo siguiente:**
+
+-   Temperaturas mensuales promedio (en grados Celsius) registradas a lo largo del año en varias estaciones meteorológicas.
+
+-   Coordenadas geográficas de las estaciones (latitud y longitud).
+
+-   Elevación de cada estación, que puede afectar la variación de la temperatura.
+
+-   Curvas de temperatura modeladas a partir de los datos mensuales, representando funciones continuas para cada estación.
+
+```{r}
+dataset_temperatura <- CanadianWeather$dailyAv[,,"Temperature.C"]
+head(dataset_temperatura)
+
+```
+
+## Creamos las curvas suavizadas
+
+```{r}
+# Clusterizamos el dataset "Canadian temperature" de (Ramsay & Silverman)
+basis <- create.bspline.basis(c(0, 365), nbasis=21, norder=4) # norder=4 : cubic spline
+fdobj <- smooth.basis(day.5, dataset_temperatura, 
+                      basis, fdnames=list("Dia", "Estación", "Grados Celsius"))$fd
+```
+
+## Corremos la tecnica de kmeans
+
+```{r}
+res <- funFEM(fdobj, K=4, init = "kmeans") #buscamos 4 clusters
+```
+
+```{r}
+# Visualizamos los resultados
+#par(mfrow=c(1,2)) # Parte la ventana gráfica en 1 fila y 2 columnas
+
+# Primer gráfico: curvas funcionales con los clusters
+plot(fdobj, col=res$cls, lwd=2, lty=1, main="Curvas funcionales por cluster")
+legend("topright", 
+       legend = paste("Cluster", 1:max(res$cls)), 
+       col = 1:max(res$cls), 
+       lty = 1, 
+       lwd = 2, 
+       cex = 0.8)
+
+# Segundo gráfico: medias de las curvas de cada cluster
+fdmeans <- fdobj
+fdmeans$coefs <- t(res$prms$my)
+plot(fdmeans, col=1:max(res$cls), lwd=2, main="Curvas medias por cluster")
+
+# Agregar leyenda en el segundo gráfico
+legend("topright", 
+       legend = paste("Cluster", 1:max(res$cls)), 
+       col = 1:max(res$cls), 
+       lty = 1, 
+       lwd = 2, 
+       cex = 0.8)
+
+```
+
+```{r}
+
+
+# Ver las regiones climáticas
+table(CanadianWeather$region)
+
+```
+
+![](images/clipboard-2666949971.png)
+
+![](images/clipboard-517997902.png)
